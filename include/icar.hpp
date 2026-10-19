@@ -32,7 +32,6 @@
 #include "com/uart.hpp"
 #include "utils/detection.hpp"
 #include "utils/show.hpp"
-#include "utils/info.hpp"
 #include "utils/loop.hpp"
 #include "ctrl/predeal.hpp"
 #include "ctrl/center.hpp"
@@ -72,6 +71,7 @@ private:
 
     // 全局共享数据链
     cv::Mat imgShare;
+    cv::Point2d lastRightTargetIPM = cv::Point2d(-1, -1); // 右边线寻迹：上一次有效目标点（丢线时惯性沿用，不回退中心线）
     std::mutex mtxImg;
     std::condition_variable cvImg;
     std::atomic<bool> readyImg{false};
@@ -271,18 +271,14 @@ public:
         detection = make_shared<Detection>(params->config.model,
                                            params->config.score); // AI模型初始化
 
-        // 初始化串口通信（config.uartEnable=false 时跳过，用于无下位机调试）
+        // 初始化串口
         uart = make_shared<Uart>();
-        if (params->config.uartEnable)
+        if (uart->open("/dev/ttyUSB0") < 0)
         {
-            if (uart->open("/dev/ttyUSB0") < 0)
-                printf("[Warn]: Uart init failed, continue without lower machine!!!\n");
-            uart->startReceive();
+            printf("[Error]: Uart init failed!!!\n");
+            exit(-1);
         }
-        else
-        {
-            printf("[Info]: Uart disabled by config (uart=false), skip serial init.\n");
-        }
+        uart->startReceive();
 
         // 相机初始化
         // USB摄像头初始化
@@ -302,7 +298,7 @@ public:
 
         if (params->config.debug)
         {
-            show = make_shared<Show>(6); // 调试UI初始化（Bin/Track/Ctrl/FSM/IPM/Info六窗口）
+            show = make_shared<Show>(4); // 调试UI初始化（Bin/Track/Ctrl/IPM四窗口）
         }
 
         // FSM有限状态机初始化
@@ -400,7 +396,7 @@ public:
                 }
                 circle(imgIpm, Point(COLSIMAGEIPM / 2, 499), 4, Scalar(255, 0, 0), -1); // 蓝色车辆位置
             }
-            show->setNewWindow(5, "IPM", imgIpm);
+            show->setNewWindow(4, "IPM", imgIpm);
             if (params->config.saveIpm && params->config.saveImg)
                 savePicture(imgIpm); // 保存图像
         }
@@ -447,9 +443,11 @@ public:
                     targetIPM = targetIPM_center;
                     targetFound = true;
                 }
+                // 特殊区域不走右边线，清除缓存，避免出区后沿用过期目标点
+                lastRightTargetIPM = Point2d(-1, -1);
             }
             else {
-                // 普通模式：使用右边缘 + 偏移量
+                // 右边线单边寻迹：右边缘 + 偏移量；丢线时不回退中心线，沿用上一次有效目标点
                 const auto &edgeRight = params->track->pointsEdgeRight;
                 if (edgeRight.size() >= 5) {
                     vector<Point2d> edgeRightIPM;
@@ -475,13 +473,12 @@ public:
                         targetIPM.y = min((double)ROWSIMAGEIPM - 1, targetIPM.y);
                     }
                 }
-            }
-
-            // ===== 5. 降级处理 =====
-            if (!targetFound) {
-                Point2d targetIPM_center = center->getTargetPointIPM(targetRow, params);
-                if (targetIPM_center.x >= 0 && targetIPM_center.y >= 0) {
-                    targetIPM = targetIPM_center;
+                if (targetFound) {
+                    lastRightTargetIPM = targetIPM; // 记录本次有效目标点
+                }
+                else if (lastRightTargetIPM.x >= 0 && lastRightTargetIPM.y >= 0) {
+                    // 右边线丢失（十字路口/缺口）：保持上一次目标点，延续当前转弯趋势
+                    targetIPM = lastRightTargetIPM;
                     targetFound = true;
                 }
             }
@@ -505,26 +502,6 @@ public:
             detection->drawBox(img);        // 图像绘制AI结果
             center->drawImage(params, img); // 图像绘制控制路径
             show->setNewWindow(3, "Ctrl", img);
-
-            // 特殊区域图像处理结果显示
-            Mat imgRes = Mat::zeros(Size(COLSIMAGE, ROWSIMAGE), CV_8UC3); // 创建全黑图像
-            fsmFactory.busy->show(imgRes);
-            fsmFactory.park->show(imgRes);
-            fsmFactory.stop->show(imgRes);
-            fsmFactory.cross->show(imgRes);
-            fsmFactory.fork->show(imgRes);
-            fsmFactory.slow->show(imgRes);
-            fsmFactory.obstacle->show(imgRes);
-            fsmFactory.yfork->show(imgRes);
-            show->setNewWindow(4, "FSM", imgRes);
-
-            // Info信息面板：文字状态汇总（AI结果锁内拷贝后再传入，避免跨线程竞态）
-            vector<PredictResult> resInfo;
-            {
-                std::lock_guard<std::mutex> lock(mtxRes);
-                resInfo = params->results;
-            }
-            show->setNewWindow(6, "Info", drawInfo(params, uart, resInfo, show->index));
 
             show->show(); // 渲染并显示所有调试窗口
             uart->carControl(0, params->ctrl.servo, 0);

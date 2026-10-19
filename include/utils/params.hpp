@@ -38,6 +38,8 @@ struct Control
     cv::Point2d mubiaoni;
     double rad;
     double ld;
+    double steer = 0.0;             // Pure Pursuit最终转向角（弧度，正值左转，已限幅），供显示
+    bool steerHold = false;         // 转向死区激活：预瞄点横向偏差小于阈值，保持直行（供显示）
     bool stop = false;
     bool back = false;
     bool slow = false;
@@ -84,13 +86,13 @@ struct Config
     float runP2 = 0.007f;    // 微分系数
 
     float turnP = 3.5;
+    float steerDeadband = 20.0f; // 转向死区阈值(IPM像素)：预瞄点横向偏差小于该值时不转向保持直行（直道抗抖），0=关闭
     int park_looking_y=350;
     int looking_y = 270;
     int looking_offset = 90;
     int busy_looking_y = 270;      // 施工区drivingThrough阶段独立前视y坐标
 
     bool debug = false;
-    bool uartEnable = true; // 串口通信使能（无下位机调试时设为false）
     bool saveImg = false;
     bool saveIpm = false;
     uint16_t rowCutUp = 10;
@@ -196,12 +198,12 @@ public:
             config.runP1 = configs["通用配置参数"].value("runP1", 2.2f);
             config.runP2 = configs["通用配置参数"].value("runP2", 0.007f);
             config.turnP = configs["通用配置参数"]["turnP"];
+            config.steerDeadband = configs["通用配置参数"].value("steerDeadband", 20.0f);
             config.park_looking_y = configs["通用配置参数"].value("park_looking_y", 350);
             config.looking_y = configs["通用配置参数"].value("looking_y", 270);
             config.looking_offset = configs["通用配置参数"].value("looking_offset", 90);
             config.busy_looking_y = configs["通用配置参数"].value("busy_looking_y", 270);
             config.debug = configs["通用配置参数"]["debug"];
-            config.uartEnable = configs["通用配置参数"].value("uart", true);
             config.saveImg = configs["通用配置参数"]["saveImg"];
             config.saveIpm = configs["通用配置参数"]["saveIpm"];
             config.rowCutUp = configs["通用配置参数"]["rowCutUp"];

@@ -291,25 +291,35 @@ void Center::drawImage(shared_ptr<Params> &params, Mat &img) {
         circle(img, Point(params->track->pointsEdgeLeft[i].y, params->track->pointsEdgeLeft[i].x), 1, Scalar(0, 255, 0), -1);
     for (int i = 0; i < (int)params->track->pointsEdgeRight.size(); i++)
         circle(img, Point(params->track->pointsEdgeRight[i].y, params->track->pointsEdgeRight[i].x), 1, Scalar(0, 255, 255), -1);
-    for (int i = 0; i < (int)params->ctrl.centerEdge.size(); i++)
-        circle(img, Point(params->ctrl.centerEdge[i].y, params->ctrl.centerEdge[i].x), 1, Scalar(0, 0, 255), -1);
 
-    Rect rect(params->ctrl.center, ROWSIMAGE - 20, 10, 20);
-    rectangle(img, rect, Scalar(0, 0, 255), cv::FILLED);
+    // ===== 纯追踪控制显示：目标点标注（IPM目标点逆变换回原图） + 车头连线 =====
+    const Point2d &anc = params->ctrl.anchorIPM;
+    if (anc.x >= 0 && anc.y >= 0) {
+        Point2d srcPt = ipm.homographyInv(anc);
+        if (srcPt.x >= 0 && srcPt.x < COLSIMAGE && srcPt.y >= 0 && srcPt.y < ROWSIMAGE) {
+            Point tgt((int)srcPt.x, (int)srcPt.y);
+            line(img, Point(COLSIMAGE / 2, ROWSIMAGE), tgt, Scalar(0, 0, 255), 1); // 车头→目标连线
+            circle(img, tgt, 4, Scalar(0, 0, 255), 1);                             // 目标点圈注
+            circle(img, tgt, 1, Scalar(0, 0, 255), -1);
+        }
+    } else {
+        putText(img, "No Target", Point(COLSIMAGE / 2 - 35, ROWSIMAGE / 2),
+                FONT_HERSHEY_PLAIN, 0.8, Scalar(0, 0, 255), 1); // 右边线丢失提示
+    }
 
+    // ===== 控制量文字：前视距离 / 转向角 / 舵机PWM =====
     int dis = 20;
     string str = "Edge: " + doble2String(params->track->stdevLeft, 1) + " | " + doble2String(params->track->stdevRight, 1);
     putText(img, str, Point(COLSIMAGE - 100, 2 * dis), FONT_HERSHEY_PLAIN, 0.7, Scalar(0, 0, 255), 1);
-    putText(img, to_string(params->ctrl.center), Point(COLSIMAGE / 2 - 10, ROWSIMAGE - 40),
-            FONT_HERSHEY_PLAIN, 1.2, Scalar(0, 0, 255), 1);
 
-    string strategyStr;
-    switch (currentStrategy) {
-        case TrackStrategy::DUAL_EDGE: strategyStr = "DUAL"; break;
-        case TrackStrategy::LEFT_EDGE: strategyStr = "LEFT"; break;
-        case TrackStrategy::RIGHT_EDGE: strategyStr = "RIGHT"; break;
-    }
-    putText(img, "Strategy: " + strategyStr, Point(10, 20), FONT_HERSHEY_PLAIN, 0.8, Scalar(255, 255, 0), 1);
+    double steerDeg = params->ctrl.steer * 180.0 / M_PI;
+    int pwmDiff = PWMSERVOMID - params->ctrl.servo; // 正=左转
+    string steerText = "ld: " + doble2String(params->ctrl.ld, 2) + "m Steer: " + doble2String(steerDeg, 1) + "deg";
+    if (params->ctrl.steerHold)
+        steerText += " [DB]"; // 转向死区激活：预瞄点横向偏差小，保持直行
+    putText(img, steerText, Point(10, dis), FONT_HERSHEY_PLAIN, 0.8, Scalar(255, 255, 0), 1);
+    putText(img, "Svo: " + to_string(params->ctrl.servo) + " (" + (pwmDiff >= 0 ? "+" : "") + to_string(pwmDiff) + ")",
+            Point(10, 2 * dis), FONT_HERSHEY_PLAIN, 0.8, Scalar(255, 255, 0), 1);
 
     showMode(img, params->mode);
 }

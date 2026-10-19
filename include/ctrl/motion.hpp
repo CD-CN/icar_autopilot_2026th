@@ -122,6 +122,29 @@ public:
             // 3. 计算基础 PWM 偏差（P 项）
             int pwmDiff = static_cast<int>(steer_rad * pwm_scale);
             int lastpwmDiff=0;
+
+            // ===== 转向死区：预瞄点横向偏差很小时不转向（抑制直道抖动/高频修正） =====
+            // 带迟滞：|横向偏差| < steerDeadband 进入死区（舵机回中保持直行），
+            // |横向偏差| > 1.5*steerDeadband 才退出死区恢复转向，避免阈值边界来回抖动；
+            // steerDeadband=0 时关闭死区。目标点丢失(mubiaoni=-1)时偏差极大，不进死区
+            double devLateral = fabs(params->ctrl.mubiaoni.x - 400); // 预瞄点横向偏差（IPM像素）
+            static bool steerDeadbandOn = false;
+            if (!steerDeadbandOn && devLateral < params->config.steerDeadband)
+                steerDeadbandOn = true;  // 偏差进入死区 → 不转向
+            else if (steerDeadbandOn && devLateral > params->config.steerDeadband * 1.5)
+                steerDeadbandOn = false; // 偏差明显增大 → 恢复转向
+
+            if (steerDeadbandOn)
+            {
+                pwmDiff = 0;               // 不转向：舵机回中保持直行
+                params->ctrl.steer = 0.0;  // 显示与实际控制保持一致
+                params->ctrl.steerHold = true;
+            }
+            else
+            {
+                params->ctrl.steer = steer_rad; // 记录最终转向角，供调试显示
+                params->ctrl.steerHold = false;
+            }
             // // ---- 新增：微分阻尼（抑制画龙） ----
             // static double steer_rad_last = 0.0;
             // double d_steer = steer_rad - steer_rad_last;        // 曲率变化率

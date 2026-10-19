@@ -158,17 +158,10 @@ public:
      */
     int transmitByte(unsigned char data)
     {
-        if (!isOpen || serialPort == nullptr) // 串口未打开（如无下位机），静默丢弃
-            return 0;
         // try检测语句块有没有异常
         try
         {
             serialPort->WriteByte(data); // 写数据到串口
-        }
-        catch (const OpenFailed &) // 端口已关闭/不可写，视为链路断开
-        {
-            isOpen = false;
-            return -2;
         }
         catch (const std::runtime_error &) // catch捕获并处理 try 检测到的异常。
         {
@@ -190,7 +183,7 @@ public:
      */
     void flushWriteBuffer()
     {
-        if (serialPort && isOpen) {
+        if (serialPort) {
             serialPort->DrainWriteBuffer();
         }
     }
@@ -273,12 +266,11 @@ public:
     void close(void)
     {
         printf(" uart thread exit!\n");
-        if (isOpen)
-            carControl(0, PWMSERVOMID,0); // 仅串口已打开时发停车指令
+        carControl(0, PWMSERVOMID,0);
         isRunning = false;
         if (threadRec && threadRec->joinable())
             threadRec->join();
-        if (serialPort != nullptr && isOpen)
+        if (serialPort != nullptr)
         {
             serialPort->Close();
             serialPort = nullptr;
